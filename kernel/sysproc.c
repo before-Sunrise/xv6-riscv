@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -94,4 +95,35 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64 
+sys_trace(void)
+{
+  int mask = 0;
+  if(argint(0, &mask) == 0 && mask >= 0)
+  {
+    myproc()->mask = mask;
+    return 0;
+  }
+  return -1;
+}
+
+uint64
+sys_sysinfo(void)
+{
+  //用于存储用户空间的虚拟地址中指向sysinfo的指针
+  uint64 ptr;
+  //获取唯一的参数：指向结构体sysinfo的指针
+  if(argaddr(0, &ptr) < 0) return -1;
+  struct sysinfo kernelInfo;
+  kernelInfo.freemem = getfreemem();
+  kernelInfo.nproc = getNonUnusedProcNum();
+
+  struct proc *p = myproc();
+  //将kernelinfo拷贝到用户空间虚拟地址的指针ptr指向的位置，使用该进程的页表
+  if(copyout(p->pagetable, ptr, (char *)&kernelInfo, sizeof(kernelInfo)) < 0)
+      return -1;
+  return 0;
+
 }
