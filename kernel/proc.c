@@ -20,7 +20,7 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
-
+extern pagetable_t kernel_pagetable; //vm.c
 // initialize the proc table at boot time.
 void
 procinit(void)
@@ -121,11 +121,30 @@ found:
     return 0;
   }
 
+  p->kernelpt = createKpCopy();
+  // if createKpCopy() return 0, there is a memeory allocation failue
+  if(p->kernelpt == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  
+  pte_t* pte = walk(kernel_pagetable, p->kstack, 0);
+  if(pte == 0){
+    panic("allocproc fails due to failing copying the kernel stack");
+  }
+  uint64 pa = PTE2PA(*pte);
+  int perm = PTE_FLAGS(*pte);
+  // copy the map of the process's kernel stack into the process's kernel pagetable
+  kvmmapforUkm(p->kstack, pa, PGSIZE, perm, p->kernelpt);
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+
 
   return p;
 }
@@ -150,6 +169,10 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  if(p->kernelpt){
+    freeUserKp(p->kernelpt, 0);
+  }
+  p->kernelpt = 0;
 }
 
 // Create a user page table for a given process,
@@ -473,12 +496,16 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        w_satp(MAKE_SATP(p->kernelpt));
+        sfence_vma();
+        //这里将当前cpu寄存器值保存，将p的上下文加载到该cpu寄存器中
+        //提前将进程的内核页表写入satp寄存器，返回内核时就会使用该进程的内核页表
         swtch(&c->context, &p->context);
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
-
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
         found = 1;
       }
       release(&p->lock);

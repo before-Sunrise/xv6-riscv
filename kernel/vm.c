@@ -280,7 +280,7 @@ freewalk(pagetable_t pagetable)
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
-      freewalk(child);
+      freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if(pte & PTE_V){
       panic("freewalk: leaf");
@@ -463,4 +463,57 @@ void vmprintRec(pagetable_t pagetable, int level){
 void vmprint(pagetable_t pagetable){
     printf("page table %p\n", pagetable);
     vmprintRec(pagetable, 0);
+}
+
+//create a copy of the kernel page when the kvminit is done
+//return the copy's pointer
+pagetable_t createKpCopy(){
+    pagetable_t kp = (pagetable_t) kalloc();
+    if(kp == 0) return 0;
+    memset(kp, 0, PGSIZE); 
+    // uart registers
+    kvmmapforUkm(UART0, UART0, PGSIZE, PTE_R | PTE_W, kp);
+
+    // virtio mmio disk interface
+    kvmmapforUkm(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W, kp);
+
+    // CLINT
+    kvmmapforUkm(CLINT, CLINT, 0x10000, PTE_R | PTE_W, kp);
+
+    // PLIC
+    kvmmapforUkm(PLIC, PLIC, 0x400000, PTE_R | PTE_W, kp);
+
+    // map kernel text executable and read-only.
+    kvmmapforUkm(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X, kp);
+
+    // map kernel data and the physical RAM we'll make use of.
+    kvmmapforUkm((uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W, kp);
+
+    // map the trampoline for trap entry/exit to
+    // the highest virtual address in the kernel.
+    kvmmapforUkm(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X, kp);
+    return kp;
+}
+
+// add a mapping to the user's copy of the kernel page table.
+// does not flush TLB or enable paging.
+void
+kvmmapforUkm(uint64 va, uint64 pa, uint64 sz, int perm, pagetable_t kp)
+{
+  if(mappages(kp, va, sz, pa, perm) != 0)
+    panic("kvmmap");
+}
+
+void freeUserKp(pagetable_t kp, int level){
+  if(level == 3) return;
+  for(int i = 0; i < 512; i++){
+    pte_t pte = kp[i];
+    if(pte & PTE_V){
+      uint64 child = PTE2PA(pte);
+      freeUserKp((pagetable_t)child, level + 1);
+      kp[i] = 0;
+      //kp[i] &= (~PTE_V);
+    }
+  }
+  kfree((void*)kp);
 }
