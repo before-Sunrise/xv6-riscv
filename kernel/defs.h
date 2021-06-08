@@ -183,6 +183,7 @@ pagetable_t     createKpCopy();
 void            kvmmapforUkm(uint64 va, uint64 pa, uint64 sz, int perm, pagetable_t kp);
 pte_t *         walk(pagetable_t pagetable, uint64 va, int alloc);
 void            freeUserKp(pagetable_t kp, int level);
+void            U2KPageCopy(pagetable_t up, pagetable_t kp, uint64 oldsz, uint64 newsz);
 
 // plic.c
 void            plicinit(void);
@@ -228,3 +229,7 @@ int             sockread(struct sock *, uint64, int);
 int             sockwrite(struct sock *, uint64, int);
 void            sockrecvudp(struct mbuf*, uint32, uint16, uint16);
 #endif
+
+//vmcopyin.c
+int             copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+int             copyinstr_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max);

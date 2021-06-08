@@ -121,6 +121,7 @@ found:
     return 0;
   }
 
+  // after next line, p->kernelpt is same with the kernel page table after the kvminit is done
   p->kernelpt = createKpCopy();
   // if createKpCopy() return 0, there is a memeory allocation failue
   if(p->kernelpt == 0){
@@ -243,6 +244,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  U2KPageCopy(p->pagetable, p->kernelpt, 0, p->sz);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -266,11 +268,19 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    //该进程的用户虚拟地址不能增长到PLIC
+    if(PGROUNDUP(sz + n) >= PLIC){
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    //往该进程的内核页表中增加相映的地址空间映射
+    U2KPageCopy(p->pagetable, p->kernelpt, sz -n, sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    //往该进程的内核页表中去除相映的地址空间映射
+    U2KPageCopy(p->pagetable, p->kernelpt, sz - n, sz);
   }
   p->sz = sz;
   return 0;
@@ -297,8 +307,15 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
   np->parent = p;
+  // 拷贝父进程内核页表中用户进程的地址映射
+  /*
+  if(uvmcopy(p->kernelpt, np->kernelpt, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }*/
+  U2KPageCopy(np->pagetable, np->kernelpt, 0, np->sz);
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -504,8 +521,10 @@ scheduler(void)
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+        //必须切回全局内核页表
         w_satp(MAKE_SATP(kernel_pagetable));
         sfence_vma();
+        
         found = 1;
       }
       release(&p->lock);
@@ -513,6 +532,11 @@ scheduler(void)
 #if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
+      //若没有可运行进程，则将内核自身页表写入satp寄存器并刷新TLB
+      
+      w_satp(MAKE_SATP(kernel_pagetable));
+      sfence_vma();
+      
       asm volatile("wfi");
     }
 #else

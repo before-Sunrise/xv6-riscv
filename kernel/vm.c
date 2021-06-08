@@ -379,6 +379,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
+  /*
   uint64 n, va0, pa0;
 
   while(len > 0){
@@ -395,7 +396,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
     dst += n;
     srcva = va0 + PGSIZE;
   }
-  return 0;
+  */
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -405,6 +407,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
+  /*
   uint64 n, va0, pa0;
   int got_null = 0;
 
@@ -439,6 +442,8 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+  */
+  return copyinstr_new(pagetable, dst, srcva, max);
 }
 
 void vmprintRec(pagetable_t pagetable, int level){
@@ -516,4 +521,70 @@ void freeUserKp(pagetable_t kp, int level){
     }
   }
   kfree((void*)kp);
+}
+
+//将用户页表中oldsz到newsze的虚拟地址空间的映射添加到该用户的内核页表中，并清除U位.或从内核页表中删除该映射
+void U2KPageCopy(pagetable_t up, pagetable_t kp, uint64 oldsz, uint64 newsz){
+    
+    uint64 i, pa;
+    uint flags;
+    pte_t *pte;
+    if(oldsz < newsz){
+      //oldsz如果不是所属页的起始地址，则该页已经被添加到该用户的内核页表中了
+      oldsz = PGROUNDUP(oldsz);
+      for(i = oldsz; i < newsz; i += PGSIZE){
+        if((pte = walk(up, i, 0)) == 0){
+          panic("U2KPageCopy fails: pte should exits");
+        }
+      
+        if((*pte & PTE_V) == 0){
+          panic("U2KPageCopy fails: page not present");
+        }
+        
+        pa = PTE2PA(*pte);
+        flags = PTE_FLAGS(*pte);
+        //清除U位
+        flags &= (~PTE_U);
+        if((pte = walk(kp, i, 1)) == 0){
+          panic("U2KPageCopy fails to find the  corresponding pte of user kernel page");
+        }
+        //这里把|打成||，debug了半天
+        *pte = PA2PTE(pa) | flags;
+      }
+    }
+    if(oldsz > newsz){
+      //如果newze不是所在页的首地址，该page的映射交由下次清除
+      newsz = PGROUNDUP(newsz);
+      for(i = newsz; i < oldsz; i += PGSIZE){
+        if((pte = walk(kp, i, 0)) == 0){
+          panic("U2KPageCopy fails: pte should exits");
+        }
+        if((*pte & PTE_V) == 0){
+          panic("U2KPageCopy fails: page not present");
+        }
+        //去标志位
+        *pte = 0;
+      }
+    }
+  /*
+  pte_t *pte_from, *pte_to;
+  uint64 a, pa;
+  uint flags;
+
+  if (newsz < oldsz)
+    return;
+  
+  oldsz = PGROUNDUP(oldsz);
+  for (a = oldsz; a < newsz; a += PGSIZE)
+  {
+    if ((pte_from = walk(up, a, 0)) == 0)
+      panic("u2kvmcopy: pte should exist");
+    if ((pte_to = walk(kp, a, 1)) == 0)
+      panic("u2kvmcopy: walk fails");
+    pa = PTE2PA(*pte_from);
+    // 清除PTE_U的标记位
+    flags = (PTE_FLAGS(*pte_from) & (~PTE_U));
+    *pte_to = PA2PTE(pa) | flags;
+  }
+  */
 }
