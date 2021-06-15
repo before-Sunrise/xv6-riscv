@@ -12,6 +12,10 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+// 在时钟中断处理中发现已经经过了指定的n ticks后，把p->trapframe的内容保存到trapframe_alarm中
+// 从而返回用户态执行handler后调用sys_sigreturn重新回到内核态后可以恢复原来的上下文
+char trapframe_alarm[288];
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -105,6 +109,10 @@ allocproc(void)
   return 0;
 
 found:
+  p->alarmInterval = 0;
+  p->handler = 0;
+  p->ticksAfterCall = 0;
+  
   p->pid = allocpid();
 
   // Allocate a trapframe page.

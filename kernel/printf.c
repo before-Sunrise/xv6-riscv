@@ -121,6 +121,8 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  //print function calling frames
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -131,4 +133,20 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+// print current function's frames
+void
+backtrace()
+{ 
+  //当前函数帧底的地址（该帧最高地址+1)保存在s0中，而返回地址和上一个函数帧底底地址在当前栈帧的底部的固定位置（-8，-16）
+  uint64 fp = r_fp();
+  //栈从上往下增长，pageBottom即该栈的栈底，地址最大，最低12位都为0
+  uint64 pageBottom = PGROUNDUP(fp);
+  printf("backtrace:\n");
+  //内核栈的第一个栈帧应该不会保存ra和fp，因为它不会是callee，所以不打印ra
+  while(fp < pageBottom){
+    printf("%p\n", *((uint64*)(fp - 8)));
+    fp = *((uint64*)(fp - 16));
+  }
 }
