@@ -67,7 +67,30 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause() == 13 || r_scause() == 15){
+    //缺页中断
+
+    uint64 faultAddress = r_stval();
+    //va为faultAddress所在页的起始虚拟地址
+    uint64 va = PGROUNDDOWN(faultAddress);
+    char* mem = kalloc();
+    //如果物理内存分配完了
+    if(mem == 0 ){
+      p->killed = 1;
+    }else if(va >= p->sz|| va < PGROUNDDOWN(p->trapframe->sp)){
+       //造成缺页中断的虚拟地址大于sbrk分配的地址或者小于用户栈的起始地址，杀死该进程
+      p->killed = 1;
+      kfree(mem);
+    }else{
+       memset((void*)mem, 0, PGSIZE);
+      //添加映射，如果添加失败，则释放分配的物理页，杀死该进程
+      if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_U) != 0){
+        kfree(mem);
+        p->killed = 1;
+      }
+    }
+   
+  }else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -152,7 +175,7 @@ kerneltrap()
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();
-
+  
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
   w_sepc(sepc);

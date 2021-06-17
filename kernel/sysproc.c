@@ -47,7 +47,15 @@ sys_sbrk(void)
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sz;
-  myproc()->sz += n;
+  //增加堆内存，lazy allocation
+  if(n > 0){
+    myproc()->sz = myproc()->sz + n;
+  }
+  //减少堆内存，直接取消页表中对映映射，释放对应物理页面
+  if(n < 0){
+    if(growproc(n) < 0)
+      return -1;
+  }
   /*
   if(growproc(n) < 0)
     return -1;
