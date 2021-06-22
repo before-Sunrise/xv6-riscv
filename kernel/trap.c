@@ -65,9 +65,19 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  }else if(r_scause() == 15){
+    //如果是store page fault，根据发生错误的va尝试分配一块物理页
+    //将原物理页的内容拷贝，并置W位为1
+    //如果va位置不合法：pagetable中找不到对应pte或者在trapframe/trampoline/guard page
+    //返回-1，直接杀死该进程。因为试图写非法地址
+    if(cow_alloc(p->pagetable, r_stval()) < 0){
+      p->killed = 1;
+    }
+
+  }else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    printf("program: %s\n ", p->name);
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -218,3 +228,26 @@ devintr()
   }
 }
 
+//
+int cow_alloc(pagetable_t pagetable, uint64 va){
+  pte_t* pte = walk(pagetable, va, 0);
+  //如果找不到pte，说明地址肯定非法
+  if(pte == 0){
+    return -1;
+  }
+  //如果对应pte的U/V位没置位，说明是trapframe/trampoline/guard page
+  if(((*pte & PTE_V) == 0) || ((*pte & PTE_U) == 0)){
+    return -1;
+  }
+
+  //现在试图分配一个物理页面，将原页面内容拷贝
+  uint64 pa = PTE2PA(*pte);
+  char* mem = kalloc();
+  if(mem == 0){
+    return -1;
+  }
+  memmove((void*)mem, (void*)pa, PGSIZE);
+  kfree((void*)pa);
+  *pte = PA2PTE((uint64)mem) | PTE_R | PTE_U | PTE_W | PTE_X | PTE_V;
+  return 0;
+}

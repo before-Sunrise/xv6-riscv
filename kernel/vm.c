@@ -311,20 +311,25 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+    //父进程pte的W位清零
+    *pte = *pte & (~PTE_W);
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    //if((mem = kalloc()) == 0)
+      //goto err;
+    //memmove(mem, (char*)pa, PGSIZE);
+
+    //增加该物理页面的引用计数
+    increref(pa);
+    //拷贝父进程pte给子进程
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      //kfree(mem);
       goto err;
     }
   }
@@ -358,7 +363,21 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    if(va0 >= MAXVA){
+      return -1;
+    }
+    pte_t *pte = walk(pagetable, va0, 0);
+    if(pte == 0 || ((*pte) & PTE_V) == 0 || ((*pte & PTE_U) == 0)){
+      return -1;
+    }
+    //如果U和V都置位了而W没置位，说明是cow页
+    if(((*pte) & PTE_W) == 0){
+      if(cow_alloc(pagetable, va0) == -1){
+        return -1;
+      }
+    }
+    pa0 = PTE2PA(*pte);
+    //pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
@@ -439,4 +458,28 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void vmprintRec(pagetable_t pagetable, int level){
+   int dot = (level + 1) * 2;
+    for(int i = 0; i < 512; i++){
+      pte_t pte = pagetable[i];
+      if(pte & PTE_V){
+          for(int j = 0; j < dot; j++){
+            if(j %2 == 0){
+              printf(" ");
+            }
+            printf("."); 
+          }
+          printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
+          if(level < 2){
+            uint64 child = PTE2PA(pte);
+            vmprintRec((pagetable_t)child, level + 1);
+          }
+      }
+    } 
+}
+void vmprint(pagetable_t pagetable){
+    printf("page table %p\n", pagetable);
+    vmprintRec(pagetable, 0);
 }

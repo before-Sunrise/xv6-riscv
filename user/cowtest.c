@@ -15,7 +15,7 @@ simpletest()
   uint64 phys_size = PHYSTOP - KERNBASE;
   int sz = (phys_size / 3) * 2;
 
-  printf("simple: ");
+  printf("simple:\n ");
   
   char *p = sbrk(sz);
   if(p == (char*)0xffffffffffffffffL){
